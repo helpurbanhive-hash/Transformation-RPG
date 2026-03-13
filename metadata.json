@@ -1,0 +1,7 @@
+{
+  "name": "Transform RPG",
+  "description": "A gamified fitness and self-improvement app with AI-powered guilt engine, RPG levels, and neighbourhood rivals.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
