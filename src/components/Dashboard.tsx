@@ -2,9 +2,11 @@ import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { Trophy, Flame, Target, Zap, TrendingUp, ChevronRight } from "lucide-react";
 import RotatingQuote from "./RotatingQuote";
+import { getLevelProgress } from "../services/progressionService";
 
 export default function Dashboard({ user, onNavigate }: { user: any, onNavigate: (tab: string) => void }) {
-  const levelProgress = (user.transformation_score % 500) / 5; // 0-100%
+  if (!user) return null;
+  const levelProgress = getLevelProgress(user.transformation_score || 0);
 
   return (
     <motion.div 

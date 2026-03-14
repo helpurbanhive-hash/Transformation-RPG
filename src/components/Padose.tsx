@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from "react";
-import { motion } from "motion/react";
-import { MapPin, Trophy, Users, TrendingUp, Zap, Target, Share2, MessageSquare } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
+import { MapPin, Trophy, Users, TrendingUp, Zap, Target, Share2, MessageSquare, X } from "lucide-react";
 
 export default function Padose({ user }: { user: any }) {
   const [padose, setPadose] = useState<any[]>([]);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [demoMode, setDemoMode] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const prevRivalsRef = useRef<any[]>([]);
 
   const APP_URL = "https://ais-pre-aq4usca6itvyorbk2im3oo-643578630783.asia-southeast1.run.app";
 
@@ -16,7 +18,16 @@ export default function Padose({ user }: { user: any }) {
     window.open(whatsappUrl, "_blank");
   };
 
-  useEffect(() => {
+  const addNotification = (notif: any) => {
+    const id = Date.now();
+    setNotifications(prev => [{ ...notif, id }, ...prev].slice(0, 3));
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  };
+
+  const fetchData = () => {
+    if (!user) return;
     const lat = demoMode ? 28.6139 : user.location_lat;
     const lng = demoMode ? 77.2090 : user.location_lng;
 
@@ -24,13 +35,43 @@ export default function Padose({ user }: { user: any }) {
       fetch(`/api/rivals/nearby?lat=${lat}&lng=${lng}&id=${user.id}`).then(res => res.json()),
       fetch("/api/leaderboard").then(res => res.json())
     ]).then(([rivalsData, leaderboardData]) => {
-      setPadose(rivalsData.rivals || []);
+      const rivals = rivalsData.rivals || [];
+      
+      if (prevRivalsRef.current.length > 0) {
+        rivals.forEach((rival: any) => {
+          const prevRival = prevRivalsRef.current.find((r: any) => r.id === rival.id);
+          if (prevRival) {
+            if (rival.current_level > prevRival.current_level) {
+              addNotification({
+                type: 'level',
+                name: rival.name,
+                value: rival.current_level
+              });
+            } else if (rival.transformation_score >= prevRival.transformation_score + 50) {
+              addNotification({
+                type: 'score',
+                name: rival.name,
+                value: rival.transformation_score - prevRival.transformation_score
+              });
+            }
+          }
+        });
+      }
+
+      setPadose(rivals);
+      prevRivalsRef.current = rivals;
       setLeaderboard(leaderboardData.leaderboard || []);
       setLoading(false);
     });
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 10000); // Poll every 10 seconds for demo purposes
+    return () => clearInterval(interval);
   }, [user, demoMode]);
 
-  if (loading) {
+  if (!user || loading) {
     return (
       <div className="flex items-center justify-center p-12">
         <Zap size={32} className="text-emerald-500 animate-pulse" />
@@ -42,8 +83,39 @@ export default function Padose({ user }: { user: any }) {
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="space-y-8"
+      className="space-y-8 relative"
     >
+      {/* Rival Notifications */}
+      <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[60] w-full max-w-xs space-y-2 pointer-events-none">
+        <AnimatePresence>
+          {notifications.map((notif) => (
+            <motion.div
+              key={notif.id}
+              initial={{ opacity: 0, y: -20, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+              className="bg-black/80 backdrop-blur-md border border-emerald-500/50 p-3 rounded-2xl shadow-2xl pointer-events-auto flex items-center gap-3"
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${notif.type === 'level' ? 'bg-yellow-500 text-black' : 'bg-emerald-500 text-black'}`}>
+                {notif.type === 'level' ? <Trophy size={20} /> : <TrendingUp size={20} />}
+              </div>
+              <div className="flex-1">
+                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest leading-none mb-1">Rival Update</p>
+                <p className="text-xs font-bold text-white">
+                  <span className="text-emerald-400">{notif.name}</span> {notif.type === 'level' ? `reached Level ${notif.value}!` : `gained ${notif.value} XP!`}
+                </p>
+              </div>
+              <button 
+                onClick={() => setNotifications(prev => prev.filter(n => n.id !== notif.id))}
+                className="text-zinc-500 hover:text-white p-1"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+
       {/* Invite Friends Banner */}
       <section 
         onClick={handleInvite}

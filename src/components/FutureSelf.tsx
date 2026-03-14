@@ -16,7 +16,7 @@ declare global {
 export default function FutureSelf({ user, onUpdate }: { user: any, onUpdate: (user: any) => void }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [userPhoto, setUserPhoto] = useState<string | null>(null);
-  const [afterImageUrl, setAfterImageUrl] = useState<string | null>(user.future_self_image_url || null);
+  const [afterImageUrl, setAfterImageUrl] = useState<string | null>(user?.future_self_image_url || null);
   const [error, setError] = useState<string | null>(null);
   const [showKeyDialog, setShowKeyDialog] = useState(false);
   const [showFullscreen, setShowFullscreen] = useState(false);

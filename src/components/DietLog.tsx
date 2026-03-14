@@ -1,27 +1,59 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Utensils, Plus, Trash2, Zap, Flame, Sparkles, Loader2 } from "lucide-react";
+import { Utensils, Plus, Trash2, Zap, Flame, Sparkles, Loader2, Target, MapPin, Coffee, ShoppingBag, AlertCircle } from "lucide-react";
+import { GoogleGenAI } from "@google/genai";
+import { ROCKY_BRO_SYSTEM_PROMPT } from "../constants/prompts";
+import { INDIAN_FOOD_DATA, HINGLISH_TAUNTS, HINGLISH_MOTIVATION } from "../constants/foodData";
 
 interface MealItem {
   id: string;
   name: string;
   quantity: string;
   calories: number;
+  isJunk: boolean;
 }
 
-export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (amount: number) => void }) {
+export default function DietLog({ user, onUpdate, onUpdateXP }: { user: any, onUpdate: (user: any) => void, onUpdateXP: (amount: number) => void }) {
   const [meals, setMeals] = useState<MealItem[]>([]);
   const [newItem, setNewItem] = useState({ name: "", quantity: "" });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [calorieGoal, setCalorieGoal] = useState(user?.daily_calorie_goal || 2000);
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [loadingRecs, setLoadingRecs] = useState(false);
+
+  useEffect(() => {
+    if (user?.daily_calorie_goal) {
+      setCalorieGoal(user.daily_calorie_goal);
+    }
+  }, [user?.daily_calorie_goal]);
+
+  if (!user) return null;
+
+  const totalConsumed = meals.reduce((sum, m) => sum + m.calories, 0);
+  const safeCalorieGoal = isNaN(calorieGoal) || calorieGoal <= 0 ? 2000 : calorieGoal;
+  const remainingCalories = Math.max(0, safeCalorieGoal - totalConsumed);
+  const progressPercent = Math.min(100, Math.floor((totalConsumed / safeCalorieGoal) * 100));
 
   const addMeal = () => {
     if (!newItem.name || !newItem.quantity) return;
+    
+    // Auto-detect calories and junk status from data
+    const lowerName = newItem.name.toLowerCase();
+    const foundFood = INDIAN_FOOD_DATA.find(f => 
+      lowerName.includes(f.name.toLowerCase().split('(')[0].trim())
+    );
+
+    const junkKeywords = ["pizza", "burger", "samosa", "fries", "coke", "pepsi", "chips", "kurkure", "momos", "chowmein", "pasta", "cake", "pastry", "donut"];
+    const isJunkKeyword = junkKeywords.some(k => lowerName.includes(k));
+
     const item: MealItem = {
       id: Math.random().toString(36).substring(7),
       name: newItem.name,
       quantity: newItem.quantity,
-      calories: Math.floor(Math.random() * 500) + 100 // Mock calorie estimation
+      calories: foundFood ? foundFood.calories : Math.floor(Math.random() * 500) + 100,
+      isJunk: foundFood ? foundFood.isJunk : isJunkKeyword
     };
     setMeals([...meals, item]);
     setNewItem({ name: "", quantity: "" });
@@ -31,12 +63,69 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
     setMeals(meals.filter(m => m.id !== id));
   };
 
+  const updateCalorieGoal = async () => {
+    try {
+      const res = await fetch("/api/users/calorie-goal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: user.id, daily_calorie_goal: calorieGoal })
+      });
+      const data = await res.json();
+      if (data.user) {
+        onUpdate(data.user);
+        setIsEditingGoal(false);
+      }
+    } catch (e) {
+      console.error("Error updating calorie goal:", e);
+    }
+  };
+
+  const fetchRecommendations = async () => {
+    setLoadingRecs(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+      const prompt = `
+        User Location: ${user.city || 'India'}
+        Remaining Calories for today: ${remainingCalories}
+        Diet Goal: ${user.diet_goal || 'General Fitness'}
+        
+        Suggest 3-4 best, healthy, and highly AFFORDABLE food and drink items that are EASILY available in ${user.city || 'local Indian markets'}.
+        Focus on items like: Coconut water, Sprouts, Eggs, Paneer, Chana, Buttermilk, etc.
+        
+        Return JSON format: 
+        {
+          "recommendations": [
+            { "name": "...", "calories": number, "price_range": "Cheap/Affordable", "why": "...", "type": "food" | "drink" }
+          ]
+        }
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { 
+          systemInstruction: ROCKY_BRO_SYSTEM_PROMPT,
+          responseMimeType: "application/json" 
+        }
+      });
+
+      const data = JSON.parse(response.text || "{}");
+      setRecommendations(data.recommendations || []);
+    } catch (e) {
+      console.error("Error fetching recommendations:", e);
+    } finally {
+      setLoadingRecs(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (meals.length === 0) return;
     setLoading(true);
     
-    const totalCalories = meals.reduce((sum, m) => sum + m.calories, 0);
-    
+    const hasJunk = meals.some(m => m.isJunk);
+    const randomTaunt = HINGLISH_TAUNTS[Math.floor(Math.random() * HINGLISH_TAUNTS.length)];
+    const randomMotivation = HINGLISH_MOTIVATION[Math.floor(Math.random() * HINGLISH_MOTIVATION.length)];
+
     try {
       const response = await fetch("/api/diet/log", {
         method: "POST",
@@ -45,9 +134,9 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
           user_id: user.id,
           log_date: new Date().toISOString().split('T')[0],
           meals: meals,
-          total_calories: totalCalories,
-          guilt_score: Math.floor(Math.random() * 100), // AI would calculate this
-          fomo_message: "Bhai, itna khayega toh transformation kab hogi? Control kar!"
+          total_calories: totalConsumed,
+          guilt_score: hasJunk ? Math.floor(Math.random() * 30) + 70 : Math.floor(Math.random() * 40),
+          fomo_message: hasJunk ? randomTaunt : randomMotivation
         })
       });
       
@@ -72,6 +161,107 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
         <div className="bg-zinc-900 p-3 rounded-2xl border border-zinc-800">
           <Utensils className="text-emerald-500" size={24} />
         </div>
+      </div>
+
+      {/* Calorie Goal Card */}
+      <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Target className="text-emerald-500" size={18} />
+            <h3 className="font-black italic text-lg uppercase">CALORIE GOAL</h3>
+          </div>
+          {isEditingGoal ? (
+            <button onClick={updateCalorieGoal} className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Save</button>
+          ) : (
+            <button onClick={() => setIsEditingGoal(true)} className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Edit</button>
+          )}
+        </div>
+
+        <div className="flex items-end justify-between">
+          <div>
+            {isEditingGoal ? (
+              <input 
+                type="number" 
+                value={isNaN(calorieGoal) ? "" : calorieGoal}
+                onChange={e => setCalorieGoal(parseInt(e.target.value) || 0)}
+                className="bg-black border border-emerald-500/50 rounded-xl p-2 text-2xl font-black italic w-32 focus:outline-none"
+              />
+            ) : (
+              <p className="text-4xl font-black italic tracking-tighter text-white">{calorieGoal || 0} <span className="text-xs text-zinc-500 uppercase not-italic tracking-widest">KCAL</span></p>
+            )}
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Consumed</p>
+            <p className="text-xl font-black italic text-emerald-500">{totalConsumed} KCAL</p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-zinc-500">
+            <span>Progress</span>
+            <span>{progressPercent}%</span>
+          </div>
+          <div className="h-3 bg-zinc-800 rounded-full overflow-hidden border border-zinc-700 p-0.5">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${progressPercent}%` }}
+              className={`h-full rounded-full ${totalConsumed > safeCalorieGoal ? 'bg-red-500' : 'bg-emerald-500'}`}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* AI Recommendations */}
+      <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sparkles className="text-yellow-500" size={18} />
+            <h3 className="font-black italic text-lg uppercase">AI SUGGESTIONS</h3>
+          </div>
+          <div className="flex items-center gap-1 text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+            <MapPin size={12} /> {user.city || 'Local'}
+          </div>
+        </div>
+
+        {recommendations.length === 0 && !loadingRecs ? (
+          <div className="text-center py-4">
+            <p className="text-zinc-500 text-xs font-bold mb-4">Need help completing your {remainingCalories} kcal goal?</p>
+            <button 
+              onClick={fetchRecommendations}
+              className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-yellow-500/20 transition-all"
+            >
+              Get Local Suggestions
+            </button>
+          </div>
+        ) : loadingRecs ? (
+          <div className="flex flex-col items-center py-8 gap-3">
+            <Loader2 className="text-yellow-500 animate-spin" size={24} />
+            <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Searching local markets...</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3">
+            {recommendations.map((rec, i) => (
+              <div key={i} className="bg-black/40 border border-zinc-800 p-4 rounded-2xl flex items-center gap-4">
+                <div className={`p-3 rounded-xl ${rec.type === 'drink' ? 'bg-blue-500/10 text-blue-500' : 'bg-orange-500/10 text-orange-500'}`}>
+                  {rec.type === 'drink' ? <Coffee size={20} /> : <ShoppingBag size={20} />}
+                </div>
+                <div className="flex-1">
+                  <div className="flex justify-between items-start">
+                    <h4 className="font-black text-white uppercase tracking-tight text-sm">{rec.name}</h4>
+                    <span className="text-[8px] font-black bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase">{rec.price_range}</span>
+                  </div>
+                  <p className="text-zinc-500 text-[10px] font-bold mb-1">{rec.calories} KCAL • {rec.why}</p>
+                </div>
+              </div>
+            ))}
+            <button 
+              onClick={fetchRecommendations}
+              className="text-center text-[8px] font-black text-zinc-600 uppercase tracking-widest mt-2 hover:text-zinc-400"
+            >
+              Refresh Suggestions
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 space-y-4">
@@ -113,11 +303,23 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 20 }}
-              className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex items-center justify-between"
+              className={`bg-zinc-900 border p-4 rounded-2xl flex items-center justify-between transition-colors ${meal.isJunk ? 'border-red-500/30 bg-red-500/5' : 'border-zinc-800'}`}
             >
-              <div>
-                <h4 className="font-black text-white uppercase tracking-tight">{meal.name}</h4>
-                <p className="text-zinc-500 text-xs font-bold">{meal.quantity} • ~{meal.calories} kcal</p>
+              <div className="flex items-center gap-4">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${meal.isJunk ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
+                  {meal.isJunk ? <AlertCircle size={20} /> : <Utensils size={20} />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-black text-white uppercase tracking-tight">{meal.name}</h4>
+                    {meal.isJunk && (
+                      <span className="bg-red-500 text-black text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest animate-pulse">
+                        JUNK
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-zinc-500 text-xs font-bold">{meal.quantity} • ~{meal.calories} kcal</p>
+                </div>
               </div>
               <button 
                 onClick={() => removeMeal(meal.id)}
@@ -144,10 +346,15 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-zinc-900 border-2 border-emerald-500/30 rounded-3xl p-6 space-y-4"
+          className={`bg-zinc-900 border-2 rounded-3xl p-6 space-y-4 shadow-2xl ${result.guilt_score > 70 ? 'border-red-500/50 shadow-red-500/10' : 'border-emerald-500/30'}`}
         >
           <div className="flex items-center justify-between">
-            <h3 className="font-black italic text-xl">AI ANALYSIS</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-black italic text-xl uppercase">
+                {result.guilt_score > 70 ? 'ROCKY BRO IS ANGRY' : 'AI ANALYSIS'}
+              </h3>
+              {result.guilt_score > 70 && <AlertCircle className="text-red-500 animate-bounce" size={20} />}
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-black text-zinc-500 uppercase">Guilt Score:</span>
               <span className={`text-xl font-black ${result.guilt_score > 70 ? 'text-red-500' : result.guilt_score > 40 ? 'text-yellow-500' : 'text-emerald-500'}`}>
@@ -155,9 +362,11 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
               </span>
             </div>
           </div>
-          <p className="text-zinc-300 font-medium italic leading-relaxed">
-            "{result.fomo_message}"
-          </p>
+          <div className={`p-4 rounded-2xl ${result.guilt_score > 70 ? 'bg-red-500/10 text-red-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+            <p className="font-black italic leading-relaxed text-lg">
+              "{result.fomo_message}"
+            </p>
+          </div>
           <div className="flex items-center gap-4 pt-4 border-t border-zinc-800">
             <div className="flex-1">
               <div className="flex justify-between text-[10px] font-black text-zinc-500 uppercase mb-1">
@@ -167,7 +376,7 @@ export default function DietLog({ user, onUpdateXP }: { user: any, onUpdateXP: (
               <div className="h-2 bg-zinc-800 rounded-full overflow-hidden">
                 <div 
                   className="h-full bg-emerald-500" 
-                  style={{ width: `${Math.min(100, (result.total_calories / 2000) * 100)}%` }}
+                  style={{ width: `${progressPercent}%` }}
                 />
               </div>
             </div>

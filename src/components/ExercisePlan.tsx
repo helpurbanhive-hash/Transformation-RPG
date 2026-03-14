@@ -39,6 +39,9 @@ const playSound = (type: 'success' | 'timer') => {
 
 export default function ExercisePlan({ user, onUpdateXP }: { user: any, onUpdateXP: (amount: number) => void }) {
   const [mode, setMode] = useState<'standard' | 'ai'>('standard');
+  
+  if (!user) return null;
+
   const goal = user.diet_goal || 'maintain';
   const plan = WORKOUT_PLANS[goal] || WORKOUT_PLANS.maintain;
   

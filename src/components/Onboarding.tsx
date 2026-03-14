@@ -10,6 +10,8 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   
+  const [isMockMode, setIsMockMode] = useState(false);
+  
   const [formData, setFormData] = useState({
     name: "",
     diet_goal: "weight_loss",
@@ -26,15 +28,45 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
     setStep(s => s + 1);
   };
 
+  const handleDemoLogin = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const demoMobile = "DEMO_" + Math.random().toString(36).substring(7);
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mobile_no: demoMobile })
+      });
+      const data = await res.json();
+      if (data.user) {
+        setFormData(prev => ({ 
+          ...prev, 
+          phone: data.user.mobile_no,
+          id: data.user.id 
+        }));
+        setStep(1);
+      } else {
+        throw new Error("Failed to create demo user");
+      }
+    } catch (err: any) {
+      console.error("Demo Login Error:", err);
+      setError("Failed to start demo mode. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSendOTP = async () => {
     if (!phone || phone.length < 10) {
-      setError("Please enter a valid 10-digit mobile number.");
+      setError("Please enter a valid mobile number.");
       return;
     }
     setLoading(true);
     setError(null);
     
     try {
+      // Improved phone formatting: if it doesn't start with +, assume +91 (default) but allow user to override
       const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
       console.log("Sending OTP to:", formattedPhone);
       
@@ -43,6 +75,13 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
       });
 
       if (error) {
+        if (error.message.includes("Unsupported phone provider")) {
+          console.warn("Phone provider not configured. Falling back to Mock Mode.");
+          setIsMockMode(true);
+          setFormData(prev => ({ ...prev, phone: formattedPhone }));
+          setStep(0.5);
+          return;
+        }
         console.error("Supabase Auth Error:", error);
         throw error;
       }
@@ -51,9 +90,13 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
       setStep(0.5); // OTP step
     } catch (err: any) {
       console.error("OTP Send Error:", err);
-      setError(err.message || "Failed to send OTP. Ensure SMS provider is enabled in Supabase.");
-      
-      // If it fails, we still show the error but allow demo bypass if they are stuck
+      if (err.message.includes("Unsupported phone provider")) {
+        setIsMockMode(true);
+        setFormData(prev => ({ ...prev, phone: phone.startsWith('+') ? phone : `+91${phone}` }));
+        setStep(0.5);
+      } else {
+        setError(err.message || "Failed to send OTP. SMS provider might not be configured.");
+      }
     } finally {
       setLoading(false);
     }
@@ -68,6 +111,29 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
     setError(null);
 
     try {
+      if (isMockMode) {
+        // In mock mode, any 6-digit OTP works
+        console.log("Mock OTP Verified! Creating mock user...");
+        
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mobile_no: formData.phone })
+        });
+        const data = await res.json();
+        
+        if (data.user) {
+          setFormData(prev => ({ 
+            ...prev, 
+            id: data.user.id 
+          }));
+          setStep(1);
+        } else {
+          throw new Error("Failed to create mock user");
+        }
+        return;
+      }
+
       const { data, error } = await supabase.auth.verifyOtp({
         phone: formData.phone,
         token: otp,
@@ -148,7 +214,7 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
                   <input 
                     type="tel" 
                     value={phone}
-                    onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    onChange={e => setPhone(e.target.value.replace(/[^\d+]/g, '').slice(0, 15))}
                     placeholder="9876543210"
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 pl-24 text-white font-bold focus:outline-none focus:border-emerald-500 transition-all"
                   />
@@ -167,15 +233,14 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
                 By continuing, you agree to the Warrior Code & Privacy Policy
               </p>
 
-              {/* Demo Bypass for development if keys aren't set */}
-              {!import.meta.env.VITE_SUPABASE_URL && (
-                <button 
-                  onClick={() => setStep(1)}
-                  className="w-full text-zinc-700 text-[10px] font-black uppercase tracking-widest hover:text-zinc-500 transition-colors"
-                >
-                  Demo Mode (Skip Auth)
-                </button>
-              )}
+              {/* Demo Bypass for development */}
+              <button 
+                disabled={loading}
+                onClick={handleDemoLogin}
+                className="w-full text-zinc-700 text-[10px] font-black uppercase tracking-widest hover:text-zinc-500 transition-colors flex items-center justify-center gap-2"
+              >
+                {loading ? <Loader2 className="animate-spin" size={12} /> : "Demo Mode (Skip Auth)"}
+              </button>
             </motion.div>
           )}
 
@@ -190,6 +255,13 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
               <div className="space-y-2">
                 <h2 className="text-3xl font-black italic tracking-tighter">VERIFY CODE</h2>
                 <p className="text-zinc-500 font-bold text-sm">Sent to {formData.phone}</p>
+                {isMockMode && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded-lg">
+                    <p className="text-emerald-500 text-[10px] font-black uppercase tracking-widest">
+                      Mock Mode Active: Enter any 6 digits
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -206,19 +278,37 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
                 </div>
               </div>
 
-              <button 
-                disabled={otp.length < 6 || loading}
-                onClick={handleVerifyOTP}
-                className="w-full bg-emerald-500 disabled:opacity-50 text-black font-black py-5 rounded-2xl flex items-center justify-center gap-3 text-sm uppercase tracking-widest shadow-[0_0_30px_rgba(16,185,129,0.2)]"
-              >
-                {loading ? <Loader2 className="animate-spin" size={20} /> : <>VERIFY & ENTER <Target size={20} /></>}
-              </button>
+              <div className="flex flex-col gap-2">
+                <button 
+                  disabled={otp.length < 6 || loading}
+                  onClick={handleVerifyOTP}
+                  className="w-full bg-emerald-500 disabled:opacity-50 text-black font-black py-5 rounded-2xl flex items-center justify-center gap-3 text-sm uppercase tracking-widest shadow-[0_0_30px_rgba(16,185,129,0.2)]"
+                >
+                  {loading ? <Loader2 className="animate-spin" size={20} /> : <>VERIFY & ENTER <Target size={20} /></>}
+                </button>
+
+                <button 
+                  disabled={loading}
+                  onClick={handleSendOTP}
+                  className="w-full text-zinc-500 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors py-2"
+                >
+                  Resend OTP
+                </button>
+              </div>
 
               <button 
                 onClick={() => setStep(0)}
                 className="w-full text-zinc-500 text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors"
               >
                 Change Number
+              </button>
+
+              <button 
+                disabled={loading}
+                onClick={handleDemoLogin}
+                className="w-full text-zinc-700 text-[10px] font-black uppercase tracking-widest hover:text-zinc-500 transition-colors pt-4 border-t border-zinc-900 flex items-center justify-center gap-2"
+              >
+                {loading ? <Loader2 className="animate-spin" size={12} /> : "Skip to Demo (Bypass Auth)"}
               </button>
             </motion.div>
           )}

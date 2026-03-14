@@ -18,10 +18,23 @@ export default function GoalSystem({ user, onUpdate, onUpdateXP }: { user: any, 
   const [checkInType, setCheckInType] = useState<"info" | "warning" | "danger">("info");
   const [notifications, setNotifications] = useState<any[]>([]);
   const [generatingNotification, setGeneratingNotification] = useState(false);
+  const [recentLogs, setRecentLogs] = useState<any>({ dietLogs: [], fitnessLogs: [] });
 
   useEffect(() => {
+    if (!user) return;
     fetchGoal();
-  }, []);
+    fetchLogs();
+  }, [user]);
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch(`/api/logs/${user.id}`);
+      const data = await res.json();
+      setRecentLogs(data);
+    } catch (e) {
+      console.error("Error fetching logs:", e);
+    }
+  };
 
   useEffect(() => {
     if (goal) {
@@ -37,6 +50,14 @@ export default function GoalSystem({ user, onUpdate, onUpdateXP }: { user: any, 
       const lastCheckIn = goal.last_check_in;
       const isMissedToday = lastCheckIn !== new Date().toISOString().split('T')[0];
       
+      // Activity summary for prompt
+      const dietSummary = recentLogs.dietLogs.length > 0 
+        ? recentLogs.dietLogs.map((l: any) => `${l.log_date}: ${l.total_calories} cal, guilt: ${l.guilt_score}`).join("; ")
+        : "No recent diet logs";
+      const fitnessSummary = recentLogs.fitnessLogs.length > 0
+        ? recentLogs.fitnessLogs.map((l: any) => `${l.log_date}: ${l.workout_type}, ${l.duration_mins} mins`).join("; ")
+        : "No recent fitness logs";
+
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
       const prompt = `
         User Goal: ${goal.title}
@@ -45,8 +66,13 @@ export default function GoalSystem({ user, onUpdate, onUpdateXP }: { user: any, 
         Last Check-in: ${lastCheckIn || 'Never'}
         Missed Today: ${isMissedToday ? 'Yes' : 'No'}
         
+        Recent Diet Activity: ${dietSummary}
+        Recent Fitness Activity: ${fitnessSummary}
+        
         Generate a highly aggressive, guilt-inducing, and personalized Hinglish notification message.
         If they missed today or are close to the deadline, be VERY biting and sarcastic.
+        If they have been inactive (no logs), call them out on their laziness.
+        If they have been active but the goal is far, remind them that consistency is key but they need to push harder.
         Use "Desi" psychology - mention their family's expectations or their rivals laughing at them.
         Example: "Bhai, ${daysLeft} din bache hain aur tu abhi tak soya hai? Tera rival Level up kar raha hai aur tu wahi ka wahi hai. Sharam kar!"
         
@@ -171,46 +197,61 @@ export default function GoalSystem({ user, onUpdate, onUpdateXP }: { user: any, 
 
       {/* AI Notification Center */}
       <AnimatePresence>
-        {notifications.length > 0 && (
+        {(notifications.length > 0 || generatingNotification) && (
           <motion.div 
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             className="space-y-3"
           >
-            {notifications.map((n, i) => (
-              <div 
-                key={i}
-                className={`p-5 rounded-3xl border-2 flex items-start gap-4 transition-all shadow-lg ${
-                  n.type === 'danger' ? 'bg-red-500/5 border-red-500/20 text-red-500 shadow-red-500/5' :
-                  n.type === 'warning' ? 'bg-yellow-500/5 border-yellow-500/20 text-yellow-500 shadow-yellow-500/5' :
-                  'bg-blue-500/5 border-blue-500/20 text-blue-500 shadow-blue-500/5'
-                }`}
-              >
-                <div className={`p-2 rounded-xl ${
-                  n.type === 'danger' ? 'bg-red-500/20' :
-                  n.type === 'warning' ? 'bg-yellow-500/20' :
-                  'bg-blue-500/20'
-                }`}>
-                  <Bell size={20} className="shrink-0" />
+            {generatingNotification ? (
+              <div className="p-5 rounded-3xl border-2 border-zinc-800 bg-zinc-900/50 flex items-center gap-4 animate-pulse">
+                <div className="p-2 rounded-xl bg-zinc-800">
+                  <Zap size={20} className="text-blue-500 animate-spin" />
                 </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
-                      {n.type === 'danger' ? 'URGENT WARNING' : n.type === 'warning' ? 'GOAL ALERT' : 'DAILY BRIEFING'}
-                    </p>
-                    <div className={`w-2 h-2 rounded-full animate-pulse ${
-                      n.type === 'danger' ? 'bg-red-500' :
-                      n.type === 'warning' ? 'bg-yellow-500' :
-                      'bg-blue-500'
-                    }`} />
-                  </div>
-                  <p className="text-sm font-bold italic leading-relaxed">
-                    "{n.message}"
-                  </p>
-                </div>
+                <p className="text-xs font-bold text-zinc-500 italic">Rocky Bro is analyzing your laziness...</p>
               </div>
-            ))}
+            ) : (
+              notifications.map((n, i) => (
+                <div 
+                  key={i}
+                  className={`p-5 rounded-3xl border-2 flex items-start gap-4 transition-all shadow-lg ${
+                    n.type === 'danger' ? 'bg-red-500/5 border-red-500/20 text-red-500 shadow-red-500/5' :
+                    n.type === 'warning' ? 'bg-yellow-500/5 border-yellow-500/20 text-yellow-500 shadow-yellow-500/5' :
+                    'bg-blue-500/5 border-blue-500/20 text-blue-500 shadow-blue-500/5'
+                  }`}
+                >
+                  <div className={`p-2 rounded-xl ${
+                    n.type === 'danger' ? 'bg-red-500/20' :
+                    n.type === 'warning' ? 'bg-yellow-500/20' :
+                    'bg-blue-500/20'
+                  }`}>
+                    <Bell size={20} className="shrink-0" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">
+                        {n.type === 'danger' ? 'URGENT WARNING' : n.type === 'warning' ? 'GOAL ALERT' : 'DAILY BRIEFING'}
+                      </p>
+                      <div className={`w-2 h-2 rounded-full animate-pulse ${
+                        n.type === 'danger' ? 'bg-red-500' :
+                        n.type === 'warning' ? 'bg-yellow-500' :
+                        'bg-blue-500'
+                      }`} />
+                    </div>
+                    <p className="text-sm font-bold italic leading-relaxed">
+                      "{n.message}"
+                    </p>
+                    <button 
+                      onClick={generateDailyNotification}
+                      className="mt-3 text-[8px] font-black uppercase tracking-widest opacity-50 hover:opacity-100 flex items-center gap-1"
+                    >
+                      <Zap size={10} /> Refresh AI Reminder
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -333,8 +374,8 @@ export default function GoalSystem({ user, onUpdate, onUpdateXP }: { user: any, 
                     type="range" 
                     min="0" 
                     max="100" 
-                    value={progress}
-                    onChange={(e) => setProgress(parseInt(e.target.value))}
+                    value={isNaN(progress) ? 0 : progress}
+                    onChange={(e) => setProgress(parseInt(e.target.value) || 0)}
                     onMouseUp={saveGoal}
                     onTouchEnd={saveGoal}
                     className="flex-1 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"

@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
-import { User, Camera, Save, X, MapPin, Target, Flame, Trophy } from "lucide-react";
+import { User, Camera, Save, X, MapPin, Target, Flame, Trophy, Zap, Star, Heart } from "lucide-react";
+import { ACHIEVEMENTS } from "../constants/achievements";
 
 export default function Profile({ user, onUpdate, onClose }: { user: any, onUpdate: (data: any) => void, onClose: () => void }) {
+  const earnedBadgeIds = JSON.parse(user.badges || "[]");
+  const earnedBadges = ACHIEVEMENTS.filter(a => earnedBadgeIds.includes(a.id));
+
   const [formData, setFormData] = useState({
     name: user.name || "",
     diet_goal: user.diet_goal || "weight_loss",
@@ -81,6 +85,36 @@ export default function Profile({ user, onUpdate, onClose }: { user: any, onUpda
               <p className="text-xl font-black text-white">{user.current_streak}</p>
             </div>
           </div>
+        </div>
+        
+        {/* Badges Section */}
+        <div className="space-y-4">
+          <h4 className="text-xs font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2">Earned Badges</h4>
+          {earnedBadges.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3">
+              {earnedBadges.map(badge => (
+                <div key={badge.id} className="bg-zinc-900 border border-emerald-500/30 p-3 rounded-xl flex items-center gap-3">
+                  <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-500">
+                    {badge.icon === "Flame" && <Flame size={20} />}
+                    {badge.icon === "Zap" && <Zap size={20} />}
+                    {badge.icon === "Star" && <Star size={20} />}
+                    {badge.icon === "Trophy" && <Trophy size={20} />}
+                    {badge.icon === "Target" && <Target size={20} />}
+                    {badge.icon === "Heart" && <Heart size={20} />}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-white uppercase leading-none mb-1">{badge.title}</p>
+                    <p className="text-[8px] text-zinc-500 uppercase leading-tight">{badge.description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-zinc-900/30 border border-dashed border-zinc-800 p-8 rounded-2xl text-center">
+              <Trophy size={32} className="text-zinc-800 mx-auto mb-2" />
+              <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest">No badges earned yet. Keep training!</p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">

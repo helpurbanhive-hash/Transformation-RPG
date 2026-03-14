@@ -31,6 +31,7 @@ db.exec(`
     current_streak INTEGER DEFAULT 0,
     last_active_date TEXT,
     daily_calorie_goal INTEGER DEFAULT 2000,
+    badges TEXT DEFAULT '[]',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -96,6 +97,9 @@ const tableInfoUsers = db.prepare("PRAGMA table_info(users)").all() as any[];
 if (!tableInfoUsers.some(col => col.name === 'daily_calorie_goal')) {
   db.exec("ALTER TABLE users ADD COLUMN daily_calorie_goal INTEGER DEFAULT 2000");
 }
+if (!tableInfoUsers.some(col => col.name === 'badges')) {
+  db.exec("ALTER TABLE users ADD COLUMN badges TEXT DEFAULT '[]'");
+}
 
 const tableInfoGoals = db.prepare("PRAGMA table_info(goals)").all() as any[];
 if (!tableInfoGoals.some(col => col.name === 'progress')) {
@@ -128,7 +132,7 @@ async function startServer() {
   });
 
   app.post("/api/users/profile", (req, res) => {
-    const { id, name, diet_goal, life_goal, pincode, city, lat, lng, body_image_url, transformation_score, current_level } = req.body;
+    const { id, name, diet_goal, life_goal, pincode, city, lat, lng, body_image_url, transformation_score, current_level, current_streak, last_active_date, badges } = req.body;
     
     const currentUser = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as any;
     if (!currentUser) return res.status(404).json({ error: "User not found" });
@@ -136,7 +140,7 @@ async function startServer() {
     db.prepare(`
       UPDATE users 
       SET name = ?, diet_goal = ?, life_goal = ?, pincode = ?, city = ?, location_lat = ?, location_lng = ?, body_image_url = ?,
-          transformation_score = ?, current_level = ?
+          transformation_score = ?, current_level = ?, current_streak = ?, last_active_date = ?, badges = ?
       WHERE id = ?
     `).run(
       name || currentUser.name,
@@ -149,6 +153,9 @@ async function startServer() {
       body_image_url || currentUser.body_image_url,
       transformation_score !== undefined ? transformation_score : currentUser.transformation_score,
       current_level !== undefined ? current_level : currentUser.current_level,
+      current_streak !== undefined ? current_streak : currentUser.current_streak,
+      last_active_date || currentUser.last_active_date,
+      badges || currentUser.badges,
       id
     );
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
@@ -181,7 +188,10 @@ async function startServer() {
     
     // Update Level
     const updatedUser = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
-    const newLevel = Math.floor(updatedUser.transformation_score / 500) + 1;
+    // Sync with progressionService.ts formula: XP = 50L^2 + 350L - 400
+    // L = (-350 + sqrt(122500 + 200 * (400 + XP))) / 100
+    const xp = updatedUser.transformation_score;
+    const newLevel = xp <= 0 ? 1 : Math.max(1, Math.floor((-350 + Math.sqrt(122500 + 200 * (400 + xp))) / 100));
     db.prepare("UPDATE users SET current_level = ? WHERE id = ?").run(newLevel, user_id);
 
     res.json({ guilt_score, fomo_message, user: updatedUser });
@@ -248,6 +258,12 @@ async function startServer() {
   app.get("/api/goals/:userId", (req, res) => {
     const goal = db.prepare("SELECT * FROM goals WHERE user_id = ?").get(req.params.userId);
     res.json({ goal });
+  });
+
+  app.get("/api/logs/:userId", (req, res) => {
+    const dietLogs = db.prepare("SELECT * FROM diet_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 5").all(req.params.userId);
+    const fitnessLogs = db.prepare("SELECT * FROM fitness_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 5").all(req.params.userId);
+    res.json({ dietLogs, fitnessLogs });
   });
 
   app.post("/api/goals/checkin", (req, res) => {
