@@ -16,9 +16,14 @@ import {
   Target,
   MapPin,
   Dumbbell,
-  Brain
+  Brain,
+  Sparkles, 
+  User as UserIcon, 
+  Star,
+  Loader2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { supabase } from "./config/supabase";
 
 // Components
 import Dashboard from "./components/Dashboard";
@@ -30,46 +35,61 @@ import Onboarding from "./components/Onboarding";
 import FutureSelf from "./components/FutureSelf";
 import Profile from "./components/Profile";
 import RockyAI from "./components/RockyAI";
-import { Sparkles, User as UserIcon, Star } from "lucide-react";
 import { getLevelProgress } from "./services/progressionService";
 
 export default function App() {
+  const [session, setSession] = useState<any>(null);
   const [user, setUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("home");
   const [loading, setLoading] = useState(true);
   const [showProfile, setShowProfile] = useState(false);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("transform_user");
-    if (savedUser) {
-      const parsedUser = JSON.parse(savedUser);
-      fetch(`/api/users/${parsedUser.id}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.user) {
-            setUser(data.user);
-            localStorage.setItem("transform_user", JSON.stringify(data.user));
-          }
-        })
-        .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
+    // 1. Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) {
+        fetchUserProfile(session.user.id);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    // 2. Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) {
+        fetchUserProfile(session.user.id);
+      } else {
+        setUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  const handleLogin = (mobile: string) => {
-    setLoading(true);
-    fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mobile_no: mobile })
-    })
-    .then(res => res.json())
-    .then(data => {
-      setUser(data.user);
-      localStorage.setItem("transform_user", JSON.stringify(data.user));
-    })
-    .finally(() => setLoading(false));
+  const fetchUserProfile = async (userId: string) => {
+    try {
+      // Try to fetch from backend (which uses SQLite for now)
+      // In a real Supabase app, you'd fetch from Supabase 'users' table
+      const res = await fetch(`/api/users/${userId}`);
+      const data = await res.json();
+      
+      if (data.user) {
+        setUser(data.user);
+      } else {
+        // If user doesn't exist in DB yet, create a skeleton
+        // This will trigger Onboarding
+        setUser({ id: userId, name: "New User", current_level: 1, transformation_score: 0, current_streak: 0 });
+      }
+    } catch (err) {
+      console.error("Profile Fetch Error:", err);
+      // Fallback for demo
+      setUser({ id: userId, name: "New User", current_level: 1, transformation_score: 0, current_streak: 0 });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUpdateProfile = (profileData: any) => {
@@ -77,12 +97,11 @@ export default function App() {
     fetch("/api/users/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...profileData, id: user.id })
+      body: JSON.stringify({ ...profileData, id: session?.user?.id || user.id })
     })
     .then(res => res.json())
     .then(data => {
       setUser(data.user);
-      localStorage.setItem("transform_user", JSON.stringify(data.user));
     })
     .finally(() => setLoading(false));
   };
@@ -100,7 +119,6 @@ export default function App() {
       };
       
       setUser(updatedUser);
-      localStorage.setItem("transform_user", JSON.stringify(updatedUser));
       
       // Sync with backend
       fetch("/api/users/profile", {
@@ -113,7 +131,6 @@ export default function App() {
         })
       });
 
-      // Optional: Show a toast or notification about XP gained
       console.log(`Gained ${gained} XP!`);
     });
   };
@@ -121,58 +138,29 @@ export default function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
-        <motion.div 
-          animate={{ scale: [1, 1.2, 1] }}
-          transition={{ repeat: Infinity, duration: 1.5 }}
-          className="text-emerald-500 font-mono text-xl"
-        >
-          LOADING TRANSFORM RPG...
-        </motion.div>
+        <div className="flex flex-col items-center gap-4">
+          <motion.div 
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+            className="text-emerald-500"
+          >
+            <Zap size={40} fill="currentColor" />
+          </motion.div>
+          <p className="text-emerald-500 font-black italic tracking-widest text-xs animate-pulse uppercase">
+            Initializing Transform RPG...
+          </p>
+        </div>
       </div>
     );
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-black text-white font-sans flex flex-col items-center justify-center p-6">
-        <motion.div 
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="w-full max-w-md space-y-8"
-        >
-          <div className="text-center">
-            <h1 className="text-5xl font-black tracking-tighter italic text-emerald-500 mb-2">TRANSFORM RPG</h1>
-            <p className="text-zinc-500 text-sm uppercase tracking-widest">Desi Psychology + Game Mechanics</p>
-          </div>
-
-          <div className="bg-zinc-900/50 border border-zinc-800 p-8 rounded-2xl space-y-6">
-            <div>
-              <label className="block text-xs font-bold text-zinc-500 uppercase mb-2">Mobile Number</label>
-              <input 
-                type="tel" 
-                placeholder="+91 98765 43210"
-                className="w-full bg-black border border-zinc-800 rounded-xl p-4 text-white focus:outline-none focus:border-emerald-500 transition-colors"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleLogin(e.currentTarget.value);
-                }}
-              />
-            </div>
-            <button 
-              onClick={(e) => {
-                const input = e.currentTarget.previousElementSibling?.querySelector('input');
-                if (input) handleLogin(input.value);
-              }}
-              className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold py-4 rounded-xl transition-all transform active:scale-95 flex items-center justify-center gap-2"
-            >
-              START TRANSFORMATION <ChevronRight size={20} />
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    );
+  // If no session, show Onboarding (which now handles Auth)
+  if (!session && !user) {
+    return <Onboarding onComplete={handleUpdateProfile} />;
   }
 
-  if (!user.name || user.name === "New User") {
+  // If session exists but profile is incomplete
+  if (user && (!user.name || user.name === "New User")) {
     return <Onboarding onComplete={handleUpdateProfile} />;
   }
 
@@ -239,7 +227,7 @@ export default function App() {
           )}
           {activeTab === "diet" && (
             <motion.div key="diet" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <DietLog user={user} onUpdate={setUser} onUpdateXP={handleUpdateXP} />
+              <DietLog user={user} onUpdateXP={handleUpdateXP} />
             </motion.div>
           )}
           {activeTab === "rivals" && (

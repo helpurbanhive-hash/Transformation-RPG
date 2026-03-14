@@ -5,6 +5,38 @@ import { WORKOUT_PLANS, Exercise } from "../constants/exerciseData";
 import AIWorkoutPlan from "./AIWorkoutPlan";
 import { XP_VALUES } from "../services/progressionService";
 
+const playSound = (type: 'success' | 'timer') => {
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    if (type === 'success') {
+      // Subtle high-pitched ding
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); 
+      gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.2);
+    } else {
+      // Subtle dual-tone for timer
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+      oscillator.frequency.exponentialRampToValueAtTime(659.25, audioCtx.currentTime + 0.3); // E5
+      gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.5);
+    }
+  } catch (e) {
+    // Silently fail if audio context is blocked or unavailable
+  }
+};
+
 export default function ExercisePlan({ user, onUpdateXP }: { user: any, onUpdateXP: (amount: number) => void }) {
   const [mode, setMode] = useState<'standard' | 'ai'>('standard');
   const goal = user.diet_goal || 'maintain';
@@ -27,7 +59,7 @@ export default function ExercisePlan({ user, onUpdateXP }: { user: any, onUpdate
       }, 1000);
     } else if (timeLeft === 0 && timerActive) {
       setTimerActive(false);
-      // Optional: Add a sound or haptic feedback here
+      playSound('timer');
     }
     return () => clearInterval(interval);
   }, [timerActive, timeLeft]);
@@ -52,6 +84,7 @@ export default function ExercisePlan({ user, onUpdateXP }: { user: any, onUpdate
       setCompletedExercises([...completedExercises, index]);
       setLastCompleted(index);
       onUpdateXP(XP_VALUES.EXERCISE_LOG);
+      playSound('success');
       
       // Check if this was the last exercise
       if (completedExercises.length + 1 === plan.exercises.length) {
