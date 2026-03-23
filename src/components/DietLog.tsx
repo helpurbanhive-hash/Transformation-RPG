@@ -122,12 +122,37 @@ export default function DietLog({ user, onUpdate, onUpdateXP }: { user: any, onU
     if (meals.length === 0) return;
     setLoading(true);
     
-    const hasJunk = meals.some(m => m.isJunk);
-    const randomTaunt = HINGLISH_TAUNTS[Math.floor(Math.random() * HINGLISH_TAUNTS.length)];
-    const randomMotivation = HINGLISH_MOTIVATION[Math.floor(Math.random() * HINGLISH_MOTIVATION.length)];
-
     try {
-      const response = await fetch("/api/diet/log", {
+      // AI-powered Guilt Engine
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+      const prompt = `
+        Analyze the following meals: ${JSON.stringify(meals)}.
+        Total calories: ${totalConsumed}.
+        Diet goal: ${user.diet_goal || 'General Fitness'}.
+
+        Act as "Rocky Bro", a tough but motivating fitness coach who uses Hinglish (Hindi + English).
+        Give me a guilt score (0-100) and a short, punchy feedback message (fomo_message).
+        If the user ate junk food, be harsh but motivating. If they ate healthy, be encouraging.
+
+        Return JSON:
+        {
+          "guilt_score": number,
+          "fomo_message": string
+        }
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: { 
+          systemInstruction: ROCKY_BRO_SYSTEM_PROMPT,
+          responseMimeType: "application/json" 
+        }
+      });
+
+      const aiFeedback = JSON.parse(response.text || '{"guilt_score": 50, "fomo_message": "Keep going!"}');
+
+      const responseBackend = await fetch("/api/diet/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -135,12 +160,12 @@ export default function DietLog({ user, onUpdate, onUpdateXP }: { user: any, onU
           log_date: new Date().toISOString().split('T')[0],
           meals: meals,
           total_calories: totalConsumed,
-          guilt_score: hasJunk ? Math.floor(Math.random() * 30) + 70 : Math.floor(Math.random() * 40),
-          fomo_message: hasJunk ? randomTaunt : randomMotivation
+          guilt_score: aiFeedback.guilt_score,
+          fomo_message: aiFeedback.fomo_message
         })
       });
       
-      const data = await response.json();
+      const data = await responseBackend.json();
       setResult(data);
       onUpdateXP(Math.max(0, 100 - data.guilt_score));
       setMeals([]);

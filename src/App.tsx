@@ -23,7 +23,8 @@ import {
   Loader2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { supabase } from "./config/supabase";
+import { auth } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 // Components
 import Dashboard from "./components/Dashboard";
@@ -51,48 +52,44 @@ export default function App() {
   const [xpGained, setXpGained] = useState<number | null>(null);
 
   useEffect(() => {
-    // 1. Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        fetchUserProfile(session.user.id);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        setSession({ user: firebaseUser });
+        localStorage.setItem("transform_rpg_userId", firebaseUser.uid);
+        fetchUserProfile(firebaseUser.uid);
       } else {
-        setLoading(false);
+        // Check for mock user in localStorage
+        const savedUserId = localStorage.getItem("transform_rpg_userId");
+        if (savedUserId) {
+          console.log("Found saved mock user ID:", savedUserId);
+          setSession({ user: { uid: savedUserId, isMock: true } });
+          fetchUserProfile(savedUserId);
+        } else {
+          setSession(null);
+          setUser(null);
+          setLoading(false);
+        }
       }
     });
 
-    // 2. Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        fetchUserProfile(session.user.id);
-      } else {
-        setUser(null);
-        setLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, []);
 
   const fetchUserProfile = async (userId: string) => {
     try {
-      // Try to fetch from backend (which uses SQLite for now)
-      // In a real Supabase app, you'd fetch from Supabase 'users' table
       const res = await fetch(`/api/users/${userId}`);
       const data = await res.json();
       
       if (data.user) {
         setUser(data.user);
+        localStorage.setItem("transform_rpg_userId", data.user.id);
         checkDailyLogin(data.user);
       } else {
         // If user doesn't exist in DB yet, create a skeleton
-        // This will trigger Onboarding
         setUser({ id: userId, name: "New User", current_level: 1, transformation_score: 0, current_streak: 0 });
       }
     } catch (err) {
       console.error("Profile Fetch Error:", err);
-      // Fallback for demo
       setUser({ id: userId, name: "New User", current_level: 1, transformation_score: 0, current_streak: 0 });
     } finally {
       setLoading(false);
@@ -102,14 +99,7 @@ export default function App() {
   const handleUpdateProfile = async (profileData: any) => {
     setLoading(true);
     
-    // Try to get ID from multiple sources
-    let userId = profileData.id || session?.user?.id || user?.id;
-    
-    // If still no ID, try to fetch session directly from Supabase (race condition fallback)
-    if (!userId) {
-      const { data } = await supabase.auth.getSession();
-      userId = data.session?.user?.id;
-    }
+    let userId = profileData.id || auth.currentUser?.uid || user?.id;
     
     if (!userId) {
       console.error("No User ID found for profile update");

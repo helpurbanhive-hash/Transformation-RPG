@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - id: string (required)
+    //   - name: string
+    //   - mobile_no: string (required)
+    //   - location_lat: number
+    //   - location_lng: number
+    //   - pincode: string
+    //   - city: string
+    //   - diet_goal: string
+    //   - life_goal: string
+    //   - body_image_url: string
+    //   - future_self_image_url: string
+    //   - transformation_score: integer
+    //   - current_level: integer
+    //   - current_streak: integer
+    //   - last_active_date: string
+    //   - daily_calorie_goal: integer
+    //   - badges: string
+    //   - daily_quests: string
+    //   - firebase_uid: string
+    //   - created_at: string (format: date-time)
+    //
+    // Collection: diet_logs
+    // Fields: user_id, log_date, meals_json, total_calories, guilt_score, fomo_message
+    //
+    // Collection: fitness_logs
+    // Fields: user_id, log_date, workout_type, duration_mins, calories_burned
+    //
+    // Collection: goals
+    // Fields: user_id, title, target_value, deadline, progress, last_check_in, created_at
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "help.urbanhive@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    function isValidString(val, min, max) {
+      return val is string && val.size() >= min && val.size() <= max;
+    }
+
+    // Domain Validators
+    function isValidUser(data) {
+      return hasRequiredFields(data, ['id', 'mobile_no']) &&
+             data.id is string && data.id.size() < 100 &&
+             data.mobile_no is string && data.mobile_no.size() < 20 &&
+             (!('name' in data) || (data.name is string && data.name.size() < 100)) &&
+             (!('transformation_score' in data) || data.transformation_score is int) &&
+             (!('current_level' in data) || data.current_level is int) &&
+             (!('current_streak' in data) || data.current_streak is int);
+    }
+
+    function isValidDietLog(data) {
+      return hasRequiredFields(data, ['user_id', 'log_date']) &&
+             data.user_id is string &&
+             data.log_date is string &&
+             (!('total_calories' in data) || data.total_calories is int) &&
+             (!('guilt_score' in data) || data.guilt_score is int);
+    }
+
+    function isValidFitnessLog(data) {
+      return hasRequiredFields(data, ['user_id', 'log_date']) &&
+             data.user_id is string &&
+             data.log_date is string &&
+             (!('duration_mins' in data) || data.duration_mins is int) &&
+             (!('calories_burned' in data) || data.calories_burned is int);
+    }
+
+    function isValidGoal(data) {
+      return hasRequiredFields(data, ['user_id', 'title']) &&
+             data.user_id is string &&
+             data.title is string && data.title.size() < 200 &&
+             (!('progress' in data) || data.progress is int);
+    }
+
+    // Rules
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

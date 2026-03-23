@@ -7,6 +7,25 @@ import { getLevelProgress } from "../services/progressionService";
 export default function Dashboard({ user, onNavigate }: { user: any, onNavigate: (tab: string) => void }) {
   if (!user) return null;
   const levelProgress = getLevelProgress(user.transformation_score || 0);
+  const [quests, setQuests] = useState<any[]>([]);
+  const [loadingQuests, setLoadingQuests] = useState(true);
+
+  useEffect(() => {
+    const fetchQuests = async () => {
+      try {
+        const res = await fetch(`/api/users/${user.id}/quests`);
+        const data = await res.json();
+        if (data.quests) setQuests(data.quests);
+      } catch (e) {
+        console.error("Failed to fetch quests:", e);
+      } finally {
+        setLoadingQuests(false);
+      }
+    };
+    fetchQuests();
+  }, [user.id]);
+
+  const incompleteCount = quests.filter(q => !q.completed).length;
 
   return (
     <motion.div 
@@ -68,17 +87,52 @@ export default function Dashboard({ user, onNavigate }: { user: any, onNavigate:
       </div>
 
       {/* Daily Quest */}
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6">
+      <div className={`bg-zinc-900/50 border rounded-3xl p-6 transition-all duration-500 ${incompleteCount > 0 ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'border-zinc-800'}`}>
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-black italic tracking-tighter text-lg uppercase text-zinc-300">DAILY QUESTS</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="font-black italic tracking-tighter text-lg uppercase text-zinc-300">DAILY QUESTS</h3>
+            {incompleteCount > 0 && (
+              <motion.span 
+                animate={{ scale: [1, 1.1, 1] }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                className="bg-emerald-500 text-black text-[8px] font-black px-2 py-0.5 rounded-full uppercase"
+              >
+                {incompleteCount} REMAINING
+              </motion.span>
+            )}
+          </div>
           <TrendingUp size={16} className="text-emerald-500" />
         </div>
         
         <div className="space-y-3">
-          <QuestItem title="Log 3 Meals" completed={false} reward="+50 XP" />
-          <QuestItem title="30 Min Workout" completed={false} reward="+100 XP" />
-          <QuestItem title="No Junk Food" completed={true} reward="+200 XP" />
+          {loadingQuests ? (
+            <div className="flex justify-center py-4">
+              <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : quests.length > 0 ? (
+            quests.map((quest) => (
+              <QuestItem 
+                key={quest.id} 
+                title={quest.title} 
+                completed={quest.completed} 
+                reward={quest.id === 'workout' ? '+100 XP' : quest.id === 'calories' ? '+50 XP' : '+200 XP'} 
+                highlight={!quest.completed}
+              />
+            ))
+          ) : (
+            <>
+              <QuestItem title="Log 3 Meals" completed={false} reward="+50 XP" />
+              <QuestItem title="30 Min Workout" completed={false} reward="+100 XP" />
+              <QuestItem title="No Junk Food" completed={true} reward="+200 XP" />
+            </>
+          )}
         </div>
+
+        {incompleteCount > 0 && (
+          <p className="mt-4 text-[10px] font-black text-emerald-500/70 uppercase tracking-widest text-center animate-pulse">
+            Finish your quests to level up faster!
+          </p>
+        )}
       </div>
 
       {/* Future Self Teaser */}
@@ -110,16 +164,30 @@ function StatCard({ icon, label, value, color }: any) {
   );
 }
 
-function QuestItem({ title, completed, reward }: any) {
+function QuestItem({ title, completed, reward, highlight }: any) {
   return (
-    <div className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-zinc-800/50">
+    <motion.div 
+      whileHover={{ x: 5 }}
+      className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+        completed 
+          ? 'bg-black/20 border-zinc-900/50' 
+          : highlight 
+            ? 'bg-emerald-500/5 border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.05)]' 
+            : 'bg-black/40 border-zinc-800/50'
+      }`}
+    >
       <div className="flex items-center gap-3">
-        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${completed ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-700'}`}>
+        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${completed ? 'bg-emerald-500 border-emerald-500' : 'border-zinc-700'}`}>
           {completed && <Zap size={10} className="text-black fill-current" />}
         </div>
-        <span className={`text-sm font-bold ${completed ? 'text-zinc-500 line-through' : 'text-white'}`}>{title}</span>
+        <span className={`text-sm font-bold transition-colors ${completed ? 'text-zinc-600 line-through' : 'text-white'}`}>{title}</span>
       </div>
-      <span className="text-[10px] font-black text-emerald-500">{reward}</span>
-    </div>
+      <div className="flex items-center gap-2">
+        {!completed && highlight && (
+          <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+        )}
+        <span className="text-[10px] font-black text-emerald-500">{reward}</span>
+      </div>
+    </motion.div>
   );
 }

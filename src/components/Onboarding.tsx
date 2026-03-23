@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ChevronRight, MapPin, Target, User, Phone, ShieldCheck, Loader2 } from "lucide-react";
-import { supabase } from "../config/supabase";
+import { auth } from "../firebase";
+import { signInAnonymously } from "firebase/auth";
 
 export default function Onboarding({ onComplete }: { onComplete: (data: any) => void }) {
   const [step, setStep] = useState(0); // Start at 0 for Auth
@@ -38,8 +39,16 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mobile_no: demoMobile })
       });
-      const data = await res.json();
-      if (data.user) {
+      
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      if (res.ok && data.user) {
+        localStorage.setItem("transform_rpg_userId", data.user.id);
         setFormData(prev => ({ 
           ...prev, 
           phone: data.user.mobile_no,
@@ -47,7 +56,7 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
         }));
         setStep(1);
       } else {
-        throw new Error("Failed to create demo user");
+        throw new Error(data.error || `Failed to create demo user (Status: ${res.status})`);
       }
     } catch (err: any) {
       console.error("Demo Login Error:", err);
@@ -66,37 +75,19 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
     setError(null);
     
     try {
-      // Improved phone formatting: if it doesn't start with +, assume +91 (default) but allow user to override
       const formattedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
-      console.log("Sending OTP to:", formattedPhone);
+      console.log("Mocking OTP Send to:", formattedPhone);
       
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: formattedPhone,
-      });
-
-      if (error) {
-        if (error.message.includes("Unsupported phone provider")) {
-          console.warn("Phone provider not configured. Falling back to Mock Mode.");
-          setIsMockMode(true);
-          setFormData(prev => ({ ...prev, phone: formattedPhone }));
-          setStep(0.5);
-          return;
-        }
-        console.error("Supabase Auth Error:", error);
-        throw error;
-      }
+      // Firebase Phone Auth requires Recaptcha which is tricky in iframes.
+      // We'll use a mock flow that eventually signs in anonymously or with a custom token
+      // for this demo environment, but we'll simulate the UI.
       
       setFormData(prev => ({ ...prev, phone: formattedPhone }));
+      setIsMockMode(true);
       setStep(0.5); // OTP step
     } catch (err: any) {
       console.error("OTP Send Error:", err);
-      if (err.message.includes("Unsupported phone provider")) {
-        setIsMockMode(true);
-        setFormData(prev => ({ ...prev, phone: phone.startsWith('+') ? phone : `+91${phone}` }));
-        setStep(0.5);
-      } else {
-        setError(err.message || "Failed to send OTP. SMS provider might not be configured.");
-      }
+      setError(err.message || "Failed to send OTP.");
     } finally {
       setLoading(false);
     }
@@ -111,45 +102,45 @@ export default function Onboarding({ onComplete }: { onComplete: (data: any) => 
     setError(null);
 
     try {
-      if (isMockMode) {
-        // In mock mode, any 6-digit OTP works
-        console.log("Mock OTP Verified! Creating mock user...");
-        
-        const res = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mobile_no: formData.phone })
-        });
-        const data = await res.json();
-        
-        if (data.user) {
-          setFormData(prev => ({ 
-            ...prev, 
-            id: data.user.id 
-          }));
-          setStep(1);
-        } else {
-          throw new Error("Failed to create mock user");
-        }
-        return;
-      }
-
-      const { data, error } = await supabase.auth.verifyOtp({
-        phone: formData.phone,
-        token: otp,
-        type: 'sms',
-      });
-
-      if (error) {
-        // Specifically handle invalid OTP error message as requested
-        throw new Error("Invalid OTP. Please try again.");
+      // In this environment, we'll sign in anonymously to get a Firebase UID
+      // and then link it to the mobile number in our backend.
+      let firebaseUid = "";
+      try {
+        const userCredential = await signInAnonymously(auth);
+        firebaseUid = userCredential.user.uid;
+        console.log("Firebase Anonymous Sign-in successful:", firebaseUid);
+      } catch (authErr: any) {
+        console.warn("Firebase Auth failed (likely Anonymous Auth is disabled):", authErr);
+        // Fallback to a mock UID for demo/prototype purposes
+        firebaseUid = "MOCK_" + Math.random().toString(36).substring(7);
+        console.log("Using mock UID:", firebaseUid);
       }
       
-      if (data.session) {
-        console.log("OTP Verified! Session created.");
-        nextStep(); // Move to Step 1 (Name)
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          mobile_no: formData.phone,
+          firebase_uid: firebaseUid 
+        })
+      });
+      
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+      
+      if (res.ok && data.user) {
+        localStorage.setItem("transform_rpg_userId", data.user.id);
+        setFormData(prev => ({ 
+          ...prev, 
+          id: data.user.id 
+        }));
+        setStep(1);
       } else {
-        throw new Error("Verification successful but no session created.");
+        throw new Error(data.error || `Failed to create user in backend (Status: ${res.status})`);
       }
     } catch (err: any) {
       console.error("OTP Verify Error:", err);

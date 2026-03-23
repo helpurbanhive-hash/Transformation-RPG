@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and RPG stats",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "mobile_no": { "type": "string" },
+        "location_lat": { "type": "number" },
+        "location_lng": { "type": "number" },
+        "pincode": { "type": "string" },
+        "city": { "type": "string" },
+        "diet_goal": { "type": "string" },
+        "life_goal": { "type": "string" },
+        "body_image_url": { "type": "string" },
+        "future_self_image_url": { "type": "string" },
+        "transformation_score": { "type": "integer" },
+        "current_level": { "type": "integer" },
+        "current_streak": { "type": "integer" },
+        "last_active_date": { "type": "string" },
+        "daily_calorie_goal": { "type": "integer" },
+        "badges": { "type": "string" },
+        "daily_quests": { "type": "string" },
+        "firebase_uid": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "mobile_no"]
+    },
+    "DietLog": {
+      "title": "DietLog",
+      "description": "Daily diet entry",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "log_date": { "type": "string" },
+        "meals_json": { "type": "string" },
+        "total_calories": { "type": "integer" },
+        "guilt_score": { "type": "integer" },
+        "fomo_message": { "type": "string" }
+      },
+      "required": ["user_id", "log_date"]
+    },
+    "FitnessLog": {
+      "title": "FitnessLog",
+      "description": "Daily fitness entry",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "log_date": { "type": "string" },
+        "workout_type": { "type": "string" },
+        "duration_mins": { "type": "integer" },
+        "calories_burned": { "type": "integer" }
+      },
+      "required": ["user_id", "log_date"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "User's transformation goal",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "title": { "type": "string" },
+        "target_value": { "type": "string" },
+        "deadline": { "type": "string" },
+        "progress": { "type": "integer" },
+        "last_check_in": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "title"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/diet_logs/{logId}": {
+      "schema": "DietLog",
+      "description": "Diet logs"
+    },
+    "/fitness_logs/{logId}": {
+      "schema": "FitnessLog",
+      "description": "Fitness logs"
+    },
+    "/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "User goals"
+    }
+  }
+}

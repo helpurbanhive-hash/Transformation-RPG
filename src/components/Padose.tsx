@@ -26,6 +26,15 @@ export default function Padose({ user }: { user: any }) {
     }, 5000);
   };
 
+  const MOCK_RIVALS = [
+    { id: 'mock1', name: 'Beast Rahul', city: 'Delhi', transformation_score: 1250, current_level: 15, type: 'Powerlifter' },
+    { id: 'mock2', name: 'Shredded Aman', city: 'Delhi', transformation_score: 980, current_level: 12, type: 'Calisthenics' },
+    { id: 'mock3', name: 'Yoga Priya', city: 'Delhi', transformation_score: 1500, current_level: 18, type: 'Yogi' },
+    { id: 'mock4', name: 'Cardio King', city: 'Delhi', transformation_score: 850, current_level: 10, type: 'Runner' },
+    { id: 'mock5', name: 'Iron Simran', city: 'Delhi', transformation_score: 1100, current_level: 14, type: 'CrossFit' },
+    { id: 'mock6', name: 'Bulk Master', city: 'Delhi', transformation_score: 720, current_level: 8, type: 'Bodybuilder' }
+  ];
+
   const fetchData = () => {
     if (!user) return;
     const lat = demoMode ? 28.6139 : user.location_lat;
@@ -35,7 +44,13 @@ export default function Padose({ user }: { user: any }) {
       fetch(`/api/rivals/nearby?lat=${lat}&lng=${lng}&id=${user.id}`).then(res => res.json()),
       fetch("/api/leaderboard").then(res => res.json())
     ]).then(([rivalsData, leaderboardData]) => {
-      const rivals = rivalsData.rivals || [];
+      let rivals = rivalsData.rivals || [];
+      
+      if (demoMode) {
+        const existingIds = new Set(rivals.map((r: any) => r.id));
+        const newMocks = MOCK_RIVALS.filter(m => !existingIds.has(m.id));
+        rivals = [...rivals, ...newMocks].sort((a, b) => b.transformation_score - a.transformation_score);
+      }
       
       if (prevRivalsRef.current.length > 0) {
         rivals.forEach((rival: any) => {
@@ -217,7 +232,9 @@ function PadosiCard({ padosi, index }: any) {
         </div>
         <div>
           <h3 className="font-bold text-sm text-white">{padosi.name}</h3>
-          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">{padosi.city}</p>
+          <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">
+            {padosi.city} {padosi.type ? `• ${padosi.type}` : ''}
+          </p>
         </div>
       </div>
       <div className="text-right">

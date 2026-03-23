@@ -2,319 +2,338 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import Database from "better-sqlite3";
 import dotenv from "dotenv";
+import fs from "fs";
+import { initializeApp } from "firebase/app";
+import { getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, addDoc, query, where, limit, orderBy, serverTimestamp } from "firebase/firestore/lite";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("transform_rpg.db");
+const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+if (!fs.existsSync(firebaseConfigPath)) {
+  console.error("CRITICAL: firebase-applet-config.json NOT FOUND at", firebaseConfigPath);
+  process.exit(1);
+}
+const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
 
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    mobile_no TEXT UNIQUE,
-    location_lat REAL,
-    location_lng REAL,
-    pincode TEXT,
-    city TEXT,
-    diet_goal TEXT,
-    life_goal TEXT,
-    body_image_url TEXT,
-    future_self_image_url TEXT,
-    transformation_score INTEGER DEFAULT 0,
-    current_level INTEGER DEFAULT 1,
-    current_streak INTEGER DEFAULT 0,
-    last_active_date TEXT,
-    daily_calorie_goal INTEGER DEFAULT 2000,
-    badges TEXT DEFAULT '[]',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS diet_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT,
-    log_date TEXT,
-    meals_json TEXT,
-    total_calories INTEGER,
-    guilt_score INTEGER,
-    fomo_message TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS fitness_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT,
-    log_date TEXT,
-    workout_type TEXT,
-    duration_mins INTEGER,
-    calories_burned INTEGER,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS goals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT,
-    title TEXT NOT NULL,
-    target_value TEXT,
-    deadline TEXT,
-    progress INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_check_in TEXT,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-`);
-
-// Seed Sample Data
-const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as any;
-if (userCount.count < 5) {
-  const sampleUsers = [
-    { id: "u1", name: "Rahul 'Beast' Sharma", mobile: "9876543210", lat: 28.6139, lng: 77.2090, score: 1250, level: 8, city: "New Delhi" },
-    { id: "u2", name: "Priya Fitness", mobile: "9876543211", lat: 28.6150, lng: 77.2100, score: 3400, level: 15, city: "New Delhi" },
-    { id: "u3", name: "Amit 'The Grinder' Gupta", mobile: "9876543212", lat: 28.6100, lng: 77.2050, score: 850, level: 5, city: "New Delhi" },
-    { id: "u4", name: "Sneha Yoga", mobile: "9876543213", lat: 28.6200, lng: 77.2200, score: 2100, level: 12, city: "New Delhi" },
-    { id: "u5", name: "Vikram 'Hustler' Singh", mobile: "9876543214", lat: 19.0760, lng: 72.8777, score: 4500, level: 22, city: "Mumbai" },
-    { id: "u6", name: "Anjali 'God Mode' Rao", mobile: "9876543215", lat: 12.9716, lng: 77.5946, score: 9800, level: 45, city: "Bangalore" },
-    { id: "u7", name: "Rajesh 'Iron' Kumar", mobile: "9876543216", lat: 28.6130, lng: 77.2080, score: 150, level: 2, city: "New Delhi" },
-  ];
-
-  const insertUser = db.prepare(`
-    INSERT OR IGNORE INTO users (id, name, mobile_no, location_lat, location_lng, transformation_score, current_level, city)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  sampleUsers.forEach(u => {
-    insertUser.run(u.id, u.name, u.mobile, u.lat, u.lng, u.score, u.level, u.city);
-  });
+if (!firebaseConfig.projectId) {
+  console.error("CRITICAL: projectId missing in firebase-applet-config.json");
+  process.exit(1);
 }
 
-// Migration: Add columns if they don't exist
-const tableInfoUsers = db.prepare("PRAGMA table_info(users)").all() as any[];
-if (!tableInfoUsers.some(col => col.name === 'daily_calorie_goal')) {
-  db.exec("ALTER TABLE users ADD COLUMN daily_calorie_goal INTEGER DEFAULT 2000");
-}
-if (!tableInfoUsers.some(col => col.name === 'badges')) {
-  db.exec("ALTER TABLE users ADD COLUMN badges TEXT DEFAULT '[]'");
-}
+console.log("Starting server initialization with Firebase Client SDK...");
 
-const tableInfoGoals = db.prepare("PRAGMA table_info(goals)").all() as any[];
-if (!tableInfoGoals.some(col => col.name === 'progress')) {
-  db.exec("ALTER TABLE goals ADD COLUMN progress INTEGER DEFAULT 0");
-}
+// Initialize Firebase
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
-const tableInfoUsersMigrate = db.prepare("PRAGMA table_info(users)").all() as any[];
-if (!tableInfoUsersMigrate.some(col => col.name === 'future_self_image_url')) {
-  db.exec("ALTER TABLE users ADD COLUMN future_self_image_url TEXT");
-}
+console.log("Firestore initialized with database:", firebaseConfig.firestoreDatabaseId || "(default)");
+
+const usersCol = collection(db, "users");
+const dietLogsCol = collection(db, "diet_logs");
+const fitnessLogsCol = collection(db, "fitness_logs");
+const goalsCol = collection(db, "goals");
 
 async function startServer() {
+  console.log("Starting startServer...");
   const app = express();
   const PORT = 3000;
 
+  console.log("Configuring middleware...");
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+  // Health Check
+  console.log("Configuring health check...");
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString(), databaseId: firebaseConfig.firestoreDatabaseId });
+  });
+
   // API Routes
-  app.post("/api/auth/login", (req, res) => {
-    const { mobile_no } = req.body;
-    // Mock login: find or create user
-    let user = db.prepare("SELECT * FROM users WHERE mobile_no = ?").get(mobile_no) as any;
-    if (!user) {
-      const id = Math.random().toString(36).substring(7);
-      db.prepare("INSERT INTO users (id, mobile_no, name) VALUES (?, ?, ?)").run(id, mobile_no, "New User");
-      user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+  console.log("Configuring API routes...");
+  app.post("/api/auth/login", async (req, res) => {
+    const { mobile_no, firebase_uid } = req.body;
+    console.log(`Login attempt: mobile=${mobile_no}, uid=${firebase_uid}`);
+    try {
+      if (!mobile_no) {
+        return res.status(400).json({ error: "mobile_no is required" });
+      }
+
+      let snapshot;
+      snapshot = await getDocs(query(usersCol, where("mobile_no", "==", mobile_no), limit(1)));
+      
+      if (snapshot.empty && firebase_uid) {
+        snapshot = await getDocs(query(usersCol, where("firebase_uid", "==", firebase_uid), limit(1)));
+      }
+
+      let user: any = null;
+      if (snapshot.empty) {
+        const id = firebase_uid || Math.random().toString(36).substring(7);
+        user = { 
+          id, 
+          mobile_no, 
+          firebase_uid: firebase_uid || null,
+          name: "New User", 
+          transformation_score: 0, 
+          current_level: 1, 
+          current_streak: 0, 
+          badges: "[]",
+          created_at: new Date().toISOString(),
+          daily_quests: JSON.stringify([
+            { id: "calories", title: "Log 1500 kcal", completed: false, target: 1500, current: 0 },
+            { id: "workout", title: "30 min Workout", completed: false, target: 30, current: 0 },
+            { id: "water", title: "Drink 3L Water", completed: false, target: 3000, current: 0 }
+          ])
+        };
+        await setDoc(doc(usersCol, id), user);
+      } else {
+        user = snapshot.docs[0].data();
+        if (firebase_uid && !user.firebase_uid) {
+          await updateDoc(snapshot.docs[0].ref, { firebase_uid });
+          user.firebase_uid = firebase_uid;
+        }
+      }
+      res.json({ user });
+    } catch (e: any) {
+      console.error("Login Route Error:", e);
+      res.status(500).json({ error: e.message || "Internal Server Error" });
     }
-    res.json({ user });
   });
 
-  app.post("/api/users/profile", (req, res) => {
-    const { id, name, diet_goal, life_goal, pincode, city, lat, lng, body_image_url, transformation_score, current_level, current_streak, last_active_date, badges } = req.body;
-    
-    const currentUser = db.prepare("SELECT * FROM users WHERE id = ?").get(id) as any;
-    if (!currentUser) return res.status(404).json({ error: "User not found" });
+  app.post("/api/users/profile", async (req, res) => {
+    const { id, ...profileData } = req.body;
+    try {
+      const userRef = doc(usersCol, id);
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) return res.status(404).json({ error: "User not found" });
 
-    db.prepare(`
-      UPDATE users 
-      SET name = ?, diet_goal = ?, life_goal = ?, pincode = ?, city = ?, location_lat = ?, location_lng = ?, body_image_url = ?,
-          transformation_score = ?, current_level = ?, current_streak = ?, last_active_date = ?, badges = ?
-      WHERE id = ?
-    `).run(
-      name || currentUser.name,
-      diet_goal || currentUser.diet_goal,
-      life_goal || currentUser.life_goal,
-      pincode || currentUser.pincode,
-      city || currentUser.city,
-      lat !== undefined ? lat : currentUser.location_lat,
-      lng !== undefined ? lng : currentUser.location_lng,
-      body_image_url || currentUser.body_image_url,
-      transformation_score !== undefined ? transformation_score : currentUser.transformation_score,
-      current_level !== undefined ? current_level : currentUser.current_level,
-      current_streak !== undefined ? current_streak : currentUser.current_streak,
-      last_active_date || currentUser.last_active_date,
-      badges || currentUser.badges,
-      id
-    );
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    res.json({ user });
+      const currentUser = userDoc.data();
+      const updatedData = { ...currentUser, ...profileData };
+      await updateDoc(userRef, updatedData);
+      
+      res.json({ user: updatedData });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
-  app.get("/api/users/:id", (req, res) => {
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.id);
-    res.json({ user });
+  app.get("/api/users/:id/quests", async (req, res) => {
+    try {
+      const userDoc = await getDoc(doc(usersCol, req.params.id));
+      if (!userDoc.exists()) return res.status(404).json({ error: "User not found" });
+      
+      const userData = userDoc.data() as any;
+      const quests = userData.daily_quests ? JSON.parse(userData.daily_quests) : [];
+      res.json({ quests });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
-  app.post("/api/users/calorie-goal", (req, res) => {
+  app.post("/api/users/:id/quests/complete", async (req, res) => {
+    const { questId } = req.body;
+    try {
+      const userRef = doc(usersCol, req.params.id);
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) return res.status(404).json({ error: "User not found" });
+
+      const userData = userDoc.data() as any;
+      let quests = userData.daily_quests ? JSON.parse(userData.daily_quests) : [];
+      
+      quests = quests.map((q: any) => q.id === questId ? { ...q, completed: true } : q);
+      
+      await updateDoc(userRef, { daily_quests: JSON.stringify(quests) });
+      res.json({ quests });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post("/api/users/calorie-goal", async (req, res) => {
     const { id, daily_calorie_goal } = req.body;
-    db.prepare("UPDATE users SET daily_calorie_goal = ? WHERE id = ?").run(daily_calorie_goal, id);
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    res.json({ user });
+    try {
+      const userRef = doc(usersCol, id);
+      await updateDoc(userRef, { daily_calorie_goal });
+      const userDoc = await getDoc(userRef);
+      res.json({ user: userDoc.data() });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
   app.post("/api/diet/log", async (req, res) => {
     const { user_id, log_date, meals, total_calories, guilt_score, fomo_message } = req.body;
-    
-    db.prepare(`
-      INSERT INTO diet_logs (user_id, log_date, meals_json, total_calories, guilt_score, fomo_message)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(user_id, log_date, JSON.stringify(meals), total_calories, guilt_score, fomo_message);
+    try {
+      await addDoc(dietLogsCol, {
+        user_id,
+        log_date,
+        meals_json: JSON.stringify(meals),
+        total_calories,
+        guilt_score,
+        fomo_message,
+        created_at: serverTimestamp()
+      });
 
-    // Update User Score
-    const score_delta = Math.max(0, 100 - guilt_score);
-    db.prepare("UPDATE users SET transformation_score = transformation_score + ? WHERE id = ?").run(score_delta, user_id);
-    
-    // Update Level
-    const updatedUser = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
-    // Sync with progressionService.ts formula: XP = 50L^2 + 350L - 400
-    // L = (-350 + sqrt(122500 + 200 * (400 + XP))) / 100
-    const xp = updatedUser.transformation_score;
-    const newLevel = xp <= 0 ? 1 : Math.max(1, Math.floor((-350 + Math.sqrt(122500 + 200 * (400 + xp))) / 100));
-    db.prepare("UPDATE users SET current_level = ? WHERE id = ?").run(newLevel, user_id);
+      // Update User Score
+      const score_delta = Math.max(0, 100 - guilt_score);
+      const userRef = doc(usersCol, user_id);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data() as any;
+      
+      const newScore = (userData.transformation_score || 0) + score_delta;
+      const newLevel = newScore <= 0 ? 1 : Math.max(1, Math.floor((-350 + Math.sqrt(122500 + 200 * (400 + newScore))) / 100));
+      
+      await updateDoc(userRef, {
+        transformation_score: newScore,
+        current_level: newLevel
+      });
 
-    res.json({ guilt_score, fomo_message, user: updatedUser });
-  });
-
-  app.get("/api/rivals/nearby", (req, res) => {
-    const { lat, lng, id } = req.query;
-    
-    if (!lat || !lng) {
-      // Fallback if location not provided
-      const rivals = db.prepare(`
-        SELECT id, name, current_level, transformation_score, city
-        FROM users 
-        WHERE id != ?
-        LIMIT 10
-      `).all(id);
-      return res.json({ rivals });
+      const updatedUser = { ...userData, transformation_score: newScore, current_level: newLevel };
+      res.json({ guilt_score, fomo_message, user: updatedUser });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
     }
-
-    const userLat = parseFloat(lat as string);
-    const userLng = parseFloat(lng as string);
-    
-    // 2km radius approximation (0.02 degrees)
-    const delta = 0.02;
-
-    const rivals = db.prepare(`
-      SELECT id, name, current_level, transformation_score, city, location_lat, location_lng
-      FROM users 
-      WHERE id != ? 
-      AND location_lat BETWEEN ? AND ?
-      AND location_lng BETWEEN ? AND ?
-      ORDER BY transformation_score DESC
-      LIMIT 15
-    `).all(id, userLat - delta, userLat + delta, userLng - delta, userLng + delta);
-    
-    res.json({ rivals });
   });
 
-  app.get("/api/leaderboard", (req, res) => {
-    const leaderboard = db.prepare(`
-      SELECT name, current_level, transformation_score, city
-      FROM users 
-      ORDER BY transformation_score DESC 
-      LIMIT 20
-    `).all();
-    res.json({ leaderboard });
+  app.get("/api/rivals/nearby", async (req, res) => {
+    const { id } = req.query;
+    try {
+      const snapshot = await getDocs(query(usersCol, orderBy("transformation_score", "desc"), limit(20)));
+      const rivals = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() as any }))
+        .filter(r => r.id !== id);
+      
+      res.json({ rivals });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
-  app.post("/api/goals", (req, res) => {
+  app.get("/api/leaderboard", async (req, res) => {
+    try {
+      const snapshot = await getDocs(query(usersCol, orderBy("transformation_score", "desc"), limit(20)));
+      const leaderboard = snapshot.docs.map(doc => doc.data());
+      res.json({ leaderboard });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post("/api/goals", async (req, res) => {
     const { user_id, title, target_value, deadline, progress } = req.body;
-    // Check if goal exists
-    const existing = db.prepare("SELECT * FROM goals WHERE user_id = ?").get(user_id);
-    if (existing) {
-      db.prepare("UPDATE goals SET title = ?, target_value = ?, deadline = ?, progress = ? WHERE user_id = ?")
-        .run(title, target_value, deadline, progress || 0, user_id);
-    } else {
-      db.prepare("INSERT INTO goals (user_id, title, target_value, deadline, progress) VALUES (?, ?, ?, ?, ?)")
-        .run(user_id, title, target_value, deadline, progress || 0);
+    try {
+      const snapshot = await getDocs(query(goalsCol, where("user_id", "==", user_id), limit(1)));
+      let goal: any = null;
+      if (snapshot.empty) {
+        const goalData = { user_id, title, target_value, deadline, progress: progress || 0, created_at: serverTimestamp() };
+        const docRef = await addDoc(goalsCol, goalData);
+        goal = { id: docRef.id, ...goalData };
+      } else {
+        const goalDoc = snapshot.docs[0];
+        const goalData = { title, target_value, deadline, progress: progress || 0 };
+        await updateDoc(goalDoc.ref, goalData);
+        goal = { id: goalDoc.id, ...goalDoc.data(), ...goalData };
+      }
+      res.json({ goal });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
     }
-    const goal = db.prepare("SELECT * FROM goals WHERE user_id = ?").get(user_id);
-    res.json({ goal });
   });
 
-  app.get("/api/goals/:userId", (req, res) => {
-    const goal = db.prepare("SELECT * FROM goals WHERE user_id = ?").get(req.params.userId);
-    res.json({ goal });
-  });
-
-  app.get("/api/logs/:userId", (req, res) => {
-    const dietLogs = db.prepare("SELECT * FROM diet_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 5").all(req.params.userId);
-    const fitnessLogs = db.prepare("SELECT * FROM fitness_logs WHERE user_id = ? ORDER BY log_date DESC LIMIT 5").all(req.params.userId);
-    res.json({ dietLogs, fitnessLogs });
-  });
-
-  app.post("/api/goals/checkin", (req, res) => {
-    const { user_id, progress_status } = req.body; // 'done', 'half', 'none'
-    const goal = db.prepare("SELECT * FROM goals WHERE user_id = ?").get(user_id) as any;
-    
-    if (!goal) return res.status(404).json({ error: "No goal set" });
-
-    db.prepare("UPDATE goals SET last_check_in = ? WHERE user_id = ?")
-      .run(new Date().toISOString().split('T')[0], user_id);
-
-    // Logic for Hinglish messages based on progress
-    let message = "";
-    let score_delta = 0;
-    let type = "info";
-
-    if (progress_status === 'done') {
-      message = "Shabash! Aise hi laga reh, sapne sach hone wale hain.";
-      score_delta = 50;
-      type = "info";
-    } else if (progress_status === 'half') {
-      message = "Bhai, aadha kaam karke khush mat ho. Poora kar tab maza aayega!";
-      score_delta = 20;
-      type = "warning";
-    } else {
-      message = "Bro jaag! Dekha de tu kya hai. Aaj tune kuch nahi kiya toh kal kuch nahi milega. Sharam kar!";
-      score_delta = -20;
-      type = "danger";
+  app.get("/api/goals/:userId", async (req, res) => {
+    try {
+      const snapshot = await getDocs(query(goalsCol, where("user_id", "==", req.params.userId), limit(1)));
+      res.json({ goal: snapshot.empty ? null : { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
     }
-
-    db.prepare("UPDATE users SET transformation_score = transformation_score + ? WHERE id = ?")
-      .run(score_delta, user_id);
-
-    const updatedUser = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id);
-    res.json({ message, type, user: updatedUser });
   });
 
-  app.post("/api/users/future-self", (req, res) => {
+  app.get("/api/logs/:userId", async (req, res) => {
+    try {
+      const dietSnapshot = await getDocs(query(dietLogsCol, where("user_id", "==", req.params.userId), orderBy("log_date", "desc"), limit(5)));
+      const fitnessSnapshot = await getDocs(query(fitnessLogsCol, where("user_id", "==", req.params.userId), orderBy("log_date", "desc"), limit(5)));
+      
+      const dietLogs = dietSnapshot.docs.map(doc => doc.data());
+      const fitnessLogs = fitnessSnapshot.docs.map(doc => doc.data());
+      
+      res.json({ dietLogs, fitnessLogs });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post("/api/goals/checkin", async (req, res) => {
+    const { user_id, progress_status } = req.body;
+    try {
+      const snapshot = await getDocs(query(goalsCol, where("user_id", "==", user_id), limit(1)));
+      if (snapshot.empty) return res.status(404).json({ error: "No goal set" });
+
+      const goalDoc = snapshot.docs[0];
+      const todayStr = new Date().toISOString().split('T')[0];
+      await updateDoc(goalDoc.ref, { last_check_in: todayStr });
+
+      let message = "";
+      let score_delta = 0;
+      let type = "info";
+
+      if (progress_status === 'done') {
+        message = "Shabash! Aise hi laga reh, sapne sach hone wale hain.";
+        score_delta = 50;
+      } else if (progress_status === 'half') {
+        message = "Bhai, aadha kaam karke khush mat ho. Poora kar tab maza aayega!";
+        score_delta = 20;
+        type = "warning";
+      } else {
+        message = "Bro jaag! Dekha de tu kya hai. Aaj tune kuch nahi kiya toh kal kuch nahi milega. Sharam kar!";
+        score_delta = -20;
+        type = "danger";
+      }
+
+      const userRef = doc(usersCol, user_id);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data() as any;
+      const newScore = (userData.transformation_score || 0) + score_delta;
+      await updateDoc(userRef, { transformation_score: newScore });
+
+      const updatedUser = { ...userData, transformation_score: newScore };
+      res.json({ message, type, user: updatedUser });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  });
+
+  app.post("/api/users/future-self", async (req, res) => {
     const { id, future_self_image_url } = req.body;
-    db.prepare("UPDATE users SET future_self_image_url = ? WHERE id = ?").run(future_self_image_url, id);
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
-    res.json({ user });
+    try {
+      const userRef = doc(usersCol, id);
+      await updateDoc(userRef, { future_self_image_url });
+      const userDoc = await getDoc(userRef);
+      res.json({ user: userDoc.data() });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
   });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    try {
+      console.log("Initializing Vite dev server...");
+      const vite = await createViteServer({
+        server: { 
+          middlewareMode: true,
+          hmr: { port: 0 } // Use random port to avoid conflicts
+        },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("Vite middleware attached.");
+    } catch (viteErr) {
+      console.error("Vite Initialization Error:", viteErr);
+    }
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
@@ -323,9 +342,15 @@ async function startServer() {
     });
   }
 
+  console.log(`Attempting to start server on port ${PORT}...`);
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server successfully running on http://localhost:${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV}`);
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL SERVER ERROR:", err);
+  process.exit(1);
+});
+
